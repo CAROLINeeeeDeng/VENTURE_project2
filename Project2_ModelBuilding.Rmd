@@ -3,52 +3,16 @@ library(readxl)
 library(dplyr)
 library(openxlsx)
 library(lme4)
+library(lmerTest)
+library(Matrix)
 library(mice)
-```
-#Cleanning data
-```{r}
-screentime <- read_excel("Cleaned_Full_dataset_620.xlsx", sheet="screentime")
-baseline <- read_excel("Cleaned_Full_dataset_620.xlsx", sheet="baseline")
-screentime$Date <- as.Date(screentime$Date, format = "Y/%m/%d")
-screentime$Day = weekdays(screentime$Date , abbreviate = T)
-screentime$weekday <- ifelse(screentime$Day %in% c("Sat", "Sun"), 0, 1)
-
-hm_to_min <- function(hm) {
-  unlist(lapply(hm, function(x) {
-    splt <- strsplit(x, "h")[[1]]
-    hr <- as.numeric(splt[1])
-    mn <- as.numeric(strsplit(splt[2], "m")[[1]][1])
-    return(60 * hr + mn)
-  }))
-}
-
-screentime <- screentime %>%
-  mutate(
-    Total.ST.min.true = hm_to_min(Total.ST),
-    Social.ST.min.true = hm_to_min(Social.ST),
-  )
-colnames(screentime)[1] <- "pseudo_id"
-full_data <- merge(screentime, baseline,by="pseudo_id", a11.x= TRUE)
-write.xlsx(full_data, file = "cleaned_full_data.xlsx")
-```
-
-```{r}
-data <- read_excel("cleaned_full_data.xlsx")
-data <- data %>%
-  mutate(
-    Total.ST.match = Total.ST.min.true == Total.ST.min,
-    Social.ST.match = Social.ST.min.true == Social.ST.min
-  )
-data$Total.ST.min <- data$Total.ST.min.true
-data$Social.ST.min <- data$Social.ST.min.true
-data <- data[, !colnames(data) %in% c("Total.ST.min.true", "Social.ST.min.true", "Total.ST.match", "Social.ST.match")]
-write.xlsx(data, file = "final_full_data.xlsx")
+library(metafor)
 ```
 
 ```{r}
 fit_poisson_glm <- function(subdata) {
   # Fit the Poisson GLM
-  glm_model <- glm(Total.ST.min ~ offset(log(Pickups)) + log(lag(Total.ST.min, default = NA)) + Intervention + weekday, family = "poisson", data = subdata)
+  glm_model <- glm(Total.ST.min ~ offset(log(Pickups)) + log(lag_TSM) + Intervention + weekday, family = "poisson", data = subdata)
   return(summary(glm_model))
 }
 
@@ -117,15 +81,15 @@ meta_analysis <- function(estimates_df) {
   ))
 }
 
-hypothesis_test <- function(){
-  z_score <- meta_estimates$Meta.Estimate[3] / meta_estimates$Std.Error[3]
-p_value <- 2 * (1 - pnorm(abs(z_score)))
-
-if(p_value < 0.05) {
-  print("The intervention B is statistically significant at alpha = 0.05.")
-} else {
-  print("The intervention B is not statistically significant at alpha = 0.05.")
-}
+hypothesis_test <- function(estimate_summary, beta_num, alpha=0.05){
+  z_score <- estimate_summary$Meta.Estimate[beta_num] / estimate_summary$Std.Error[beta_num]
+  p_value <- 2 * (1 - pnorm(abs(z_score)))
+  print(z_score)
+  if(p_value < alpha) {
+    print("It is statistically significant at alpha = 0.05.")
+  } else {
+    print("It is not statistically significant at alpha = 0.05.")
+  }
 }
 
 ```
@@ -161,10 +125,20 @@ data_clean <- data %>%
 data_A <- data_clean %>% 
   filter(Treatment == "A")
 data_A$Intervention <- ifelse(data_A$Phase == 'Treatment', 1, 0)
+data_A <- data_A %>% 
+  group_by(pseudo_id) %>%
+  mutate(lag_TSM = lag(Total.ST.min, default = NA)) %>%
+  ungroup()
+
 # Get subdata for Intervention B
 data_B <- data_clean %>% 
   filter(Treatment == "B")
 data_B$Intervention <- ifelse(data_B$Phase == 'Treatment', 1, 0)
+data_B <- data_B %>% 
+  group_by(pseudo_id) %>%
+  mutate(lag_TSM = lag(Total.ST.min, default = NA)) %>%
+  ungroup()
+
 
 summary_A = process_data(data_A)
 summary_B = process_data(data_B)
@@ -173,6 +147,67 @@ meta_estimates_B <- meta_analysis(summary_B)
 print(meta_estimates_A)
 print(meta_estimates_B)
 
+hypothesis_test(meta_estimates_A, 3)
+hypothesis_test(meta_estimates_B, 3)
+```
+
+```{r}
+model_A <- glm(Total.ST.min ~ offset(log(Pickups)) + log(lag_TSM) + Intervention + weekday + pets + sex + age + course.credit + siblings + apps + devices +procrastination.score, family = "poisson", data = data_A)
+
+model_B <- glm(Total.ST.min ~ offset(log(Pickups)) + log(lag_TSM) + Intervention + weekday + pets + sex + age + course.credit + siblings + apps + devices +procrastination.score, family = "poisson", data = data_B)
+
+coef_A <- summary(model_A)$coefficients
+coef_B <- summary(model_B)$coefficients
+
+meta_data_A <- data.frame(
+  estimate = coef_A[, 1],
+  se = coef_A[, 2],
+  variable = rownames(coef_A),
+  model = "A"
+)
+
+meta_data_B <- data.frame(
+  estimate = coef_B[, 1],
+  se = coef_B[, 2],
+  variable = rownames(coef_B),
+  model = "B"
+)
+
+meta_data <- rbind(meta_data_A, meta_data_B)
+
+meta_results <- list()
+for (var in unique(meta_data$variable)) {
+  data_subset <- meta_data[meta_data$variable == var, ]
+  meta_results[[var]] <- rma(yi = estimate, sei = se, method = "FE", data = data_subset)
+}
+
+meta_estimates <- sapply(meta_results, function(res) coef(res))
+meta_se <- sapply(meta_results, function(res) sqrt(diag(vcov(res))))
+
+meta_results_df <- data.frame(
+  Parameter = c('beta_0','beta_1','beta_2','beta_3','beta_4','beta_5','beta_6','beta_7','beta_8','beta_9','beta_10','beta_11'),
+  Meta.Estimate = meta_estimates,
+  Std.Error = meta_se,
+  Z.score = meta_estimates/meta_se,
+  p.value = 2 * (1 - pnorm(abs(meta_estimates/meta_se)))
+)
+rownames(meta_results_df) <- NULL
+print(meta_results_df)
+```
+
+```{r}
+data_combine <- rbind(data_A,data_B)
+model_full <- glm(Total.ST.min ~ offset(log(Pickups)) + log(lag_TSM) + Intervention + weekday + pets + sex + age + course.credit + siblings + apps + devices +procrastination.score, family = "poisson", data = data_combine)
+summary(model_full)
+```
+
+```{r}
+model_mixed <- lmer(Total.ST.min ~ offset(log(Pickups)) + log(lag_TSM) + Intervention + weekday + pets + sex + age + course.credit + siblings + apps + devices + procrastination.score + (1 | pseudo_id), data = data_combine)
+summary(model_mixed)
 ```
 
 
+```{r}
+model_compliance <- glm(compliance ~ log(lag_TSM) + weekday + pets + sex + age + course.credit + siblings + apps + devices +procrastination.score, family = "binomial", data = data_combine)
+summary(model_compliance)
+```

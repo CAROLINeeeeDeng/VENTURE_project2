@@ -1,0 +1,178 @@
+```{r}
+library(readxl)
+library(dplyr)
+library(openxlsx)
+library(lme4)
+library(mice)
+```
+#Cleanning data
+```{r}
+screentime <- read_excel("Cleaned_Full_dataset_620.xlsx", sheet="screentime")
+baseline <- read_excel("Cleaned_Full_dataset_620.xlsx", sheet="baseline")
+screentime$Date <- as.Date(screentime$Date, format = "Y/%m/%d")
+screentime$Day = weekdays(screentime$Date , abbreviate = T)
+screentime$weekday <- ifelse(screentime$Day %in% c("Sat", "Sun"), 0, 1)
+
+hm_to_min <- function(hm) {
+  unlist(lapply(hm, function(x) {
+    splt <- strsplit(x, "h")[[1]]
+    hr <- as.numeric(splt[1])
+    mn <- as.numeric(strsplit(splt[2], "m")[[1]][1])
+    return(60 * hr + mn)
+  }))
+}
+
+screentime <- screentime %>%
+  mutate(
+    Total.ST.min.true = hm_to_min(Total.ST),
+    Social.ST.min.true = hm_to_min(Social.ST),
+  )
+colnames(screentime)[1] <- "pseudo_id"
+full_data <- merge(screentime, baseline,by="pseudo_id", a11.x= TRUE)
+write.xlsx(full_data, file = "cleaned_full_data.xlsx")
+```
+
+```{r}
+data <- read_excel("cleaned_full_data.xlsx")
+data <- data %>%
+  mutate(
+    Total.ST.match = Total.ST.min.true == Total.ST.min,
+    Social.ST.match = Social.ST.min.true == Social.ST.min
+  )
+data$Total.ST.min <- data$Total.ST.min.true
+data$Social.ST.min <- data$Social.ST.min.true
+data <- data[, !colnames(data) %in% c("Total.ST.min.true", "Social.ST.min.true", "Total.ST.match", "Social.ST.match")]
+write.xlsx(data, file = "final_full_data.xlsx")
+```
+
+```{r}
+fit_poisson_glm <- function(subdata) {
+  # Fit the Poisson GLM
+  glm_model <- glm(Total.ST.min ~ offset(log(Pickups)) + log(lag(Total.ST.min, default = NA)) + Intervention + weekday, family = "poisson", data = subdata)
+  return(summary(glm_model))
+}
+
+process_data <- function(dataset) {
+  summaries <- list()
+  for(i in unique(dataset$pseudo_id)) {
+    subdata <- dataset %>% filter(pseudo_id == i)
+    if(nrow(subdata) > 1) {
+      summaries[[as.character(i)]] <- fit_poisson_glm(subdata)
+    } else {
+      summaries[[as.character(i)]] <- NA
+    }
+  }
+  summary_table <- data.frame(pseudo_id=character(),
+                              beta_0=numeric(), 
+                              beta_0_se=numeric(),
+                              beta_1=numeric(), 
+                              beta_1_se=numeric(),
+                              beta_2=numeric(), 
+                              beta_2_se=numeric(),
+                              beta_3=numeric(), 
+                              beta_3_se=numeric(),
+                              stringsAsFactors=FALSE)
+  for(i in names(summaries)) {
+    #if (!is.na(summaries[[i]])) {
+      model_coef <- coef(summaries[[i]])
+      coef_se <- sqrt(diag(vcov(summaries[[i]])))
+      summary_table <- rbind(summary_table, data.frame(pseudo_id=i,
+                                                       beta_0=model_coef[1], 
+                                                       beta_0_se=coef_se[1],
+                                                       beta_1=model_coef[2], 
+                                                       beta_1_se=coef_se[2],
+                                                       beta_2=model_coef[3], 
+                                                       beta_2_se=coef_se[3],
+                                                       beta_3=model_coef[4], 
+                                                       beta_3_se=coef_se[4]))
+    #}
+  }
+  
+  return(summary_table)
+}
+
+meta_analysis <- function(estimates_df) {
+  estimates_df$weight_beta_0 <- 1 / (estimates_df$beta_0_se^2)
+  estimates_df$weight_beta_1 <- 1 / (estimates_df$beta_1_se^2)
+  estimates_df$weight_beta_2 <- 1 / (estimates_df$beta_2_se^2)
+  estimates_df$weight_beta_3 <- 1 / (estimates_df$beta_3_se^2)
+  
+  beta_0_meta <- sum(estimates_df$beta_0 * estimates_df$weight_beta_0) / sum(estimates_df$weight_beta_0)
+  beta_1_meta <- sum(estimates_df$beta_1 * estimates_df$weight_beta_1) / sum(estimates_df$weight_beta_1)
+  beta_2_meta <- sum(estimates_df$beta_2 * estimates_df$weight_beta_2) / sum(estimates_df$weight_beta_2)
+  beta_3_meta <- sum(estimates_df$beta_3 * estimates_df$weight_beta_3) / sum(estimates_df$weight_beta_3)
+  
+  beta_0_se_meta <- sqrt(1 / sum(estimates_df$weight_beta_0))
+  beta_1_se_meta <- sqrt(1 / sum(estimates_df$weight_beta_1))
+  beta_2_se_meta <- sqrt(1 / sum(estimates_df$weight_beta_2))
+  beta_3_se_meta <- sqrt(1 / sum(estimates_df$weight_beta_3))
+  
+  meta_estimates <- c(beta_0_meta, beta_1_meta, beta_2_meta, beta_3_meta)
+  se_meta_estimates <- c(beta_0_se_meta, beta_1_se_meta, beta_2_se_meta, beta_3_se_meta)
+ 
+    return(data.frame(
+    Parameter = c("beta_0", "beta_1", "beta_2", "beta_3"),
+    Meta.Estimate = meta_estimates,
+    Std.Error = se_meta_estimates
+  ))
+}
+
+hypothesis_test <- function(){
+  z_score <- meta_estimates$Meta.Estimate[3] / meta_estimates$Std.Error[3]
+p_value <- 2 * (1 - pnorm(abs(z_score)))
+
+if(p_value < 0.05) {
+  print("The intervention B is statistically significant at alpha = 0.05.")
+} else {
+  print("The intervention B is not statistically significant at alpha = 0.05.")
+}
+}
+
+```
+
+```{r}
+data <- read_excel("final_full_data.xlsx")
+str(data)
+columns_to_convert <- c("Pickups", "workmate", "academic.talk", "non.academic", 
+                        "pets", "sex", "age", "course.credit", 
+                        "country.degree", "job", "siblings", 
+                        "apps", "devices")
+for (col in columns_to_convert) {
+  data[[col]] <- as.numeric(data[[col]])
+}
+str(data)
+
+# Filling id 1329 missing minute data
+data_1329 <- data[data$pseudo_id == 1329, ]
+data_1329 = data_1329[, c("Total.ST.min", "Social.ST.min", "Pickups")]
+method <- c("Total.ST.min" = "pmm", "Social.ST.min" = "pmm", "Pickups" = "pmm")
+imputed_data <- mice(data_1329, m=5, method=method, seed=123)
+summary(imputed_data)
+completed_data <- complete(imputed_data, 1)
+data[which(data$pseudo_id == 1329), "Total.ST.min"] <- completed_data$Total.ST.min
+data[which(data$pseudo_id == 1329), "Social.ST.min"] <- completed_data$Social.ST.min
+
+# Removing data of id who does not have any treatment minute data at all, and who only have treatment data
+ids_to_remove <- c(9285, 2520, 8622, 9680, 2880, 6759)
+data_clean <- data %>% 
+  filter(!pseudo_id %in% ids_to_remove)
+
+# Get subdata for Intervention A
+data_A <- data_clean %>% 
+  filter(Treatment == "A")
+data_A$Intervention <- ifelse(data_A$Phase == 'Treatment', 1, 0)
+# Get subdata for Intervention B
+data_B <- data_clean %>% 
+  filter(Treatment == "B")
+data_B$Intervention <- ifelse(data_B$Phase == 'Treatment', 1, 0)
+
+summary_A = process_data(data_A)
+summary_B = process_data(data_B)
+meta_estimates_A <- meta_analysis(summary_A)
+meta_estimates_B <- meta_analysis(summary_B)
+print(meta_estimates_A)
+print(meta_estimates_B)
+
+```
+
+

@@ -2,12 +2,24 @@
 ```{r}
 library(readxl)
 library(dplyr)
+
 screentime <- read_excel("Cleaned_Full_dataset_620.xlsx", sheet="screentime")
 baseline <- read_excel("Cleaned_Full_dataset_620.xlsx", sheet="baseline")
+
+# Merging the baseline data
+colnames(screentime)[1] <- "pseudo_id"
+data <- merge(screentime, baseline,by="pseudo_id", a11.x= TRUE)
+
+# Once again, uniform the format of dates
 screentime$Date <- as.Date(screentime$Date, format = "Y/%m/%d")
+
+# Generating the days
 screentime$Day = weekdays(screentime$Date , abbreviate = T)
+
+# Generating column for whether it's weekday or weekends
 screentime$weekday <- ifelse(screentime$Day %in% c("Sat", "Sun"), 0, 1)
 
+# Turing Total.ST and Social.ST data into minute data just in case some users' calculation is wrong.
 hm_to_min <- function(hm) {
   unlist(lapply(hm, function(x) {
     splt <- strsplit(x, "h")[[1]]
@@ -16,26 +28,21 @@ hm_to_min <- function(hm) {
     return(60 * hr + mn)
   }))
 }
-
 screentime <- screentime %>%
   mutate(
     Total.ST.min.true = hm_to_min(Total.ST),
     Social.ST.min.true = hm_to_min(Social.ST),
   )
-colnames(screentime)[1] <- "pseudo_id"
-full_data <- merge(screentime, baseline,by="pseudo_id", a11.x= TRUE)
-write.xlsx(full_data, file = "cleaned_full_data.xlsx")
-```
-
-```{r}
-data <- read_excel("cleaned_full_data.xlsx")
 data <- data %>%
   mutate(
     Total.ST.match = Total.ST.min.true == Total.ST.min,
     Social.ST.match = Social.ST.min.true == Social.ST.min
   )
+# Since someone got the calculation wrong, replacing with the generated true minute data instead.
 data$Total.ST.min <- data$Total.ST.min.true
 data$Social.ST.min <- data$Social.ST.min.true
 data <- data[, !colnames(data) %in% c("Total.ST.min.true", "Social.ST.min.true", "Total.ST.match", "Social.ST.match")]
+
+# Saving a copy
 write.xlsx(data, file = "final_full_data.xlsx")
 ```

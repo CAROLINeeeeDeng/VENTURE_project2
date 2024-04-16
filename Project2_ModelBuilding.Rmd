@@ -111,35 +111,36 @@ for (col in columns_to_convert) {
 # Double check
 str(data)
 
-# Removing data of id who does not have any treatment minute data at all, and who only have treatment data
-ids_to_remove <- c(9285, 2520, 8622, 9680, 2880, 6759)
-data_clean <- data %>% 
-  filter(!pseudo_id %in% ids_to_remove)
-
 # Get subdata for Intervention A
-data_A <- data_clean %>% 
+data_A <- data %>% 
   filter(Treatment == "A")
 data_A$Intervention <- ifelse(data_A$Phase == 'Treatment', 1, 0)
 data_A <- data_A %>% 
   group_by(pseudo_id) %>%
   mutate(lag_TSM = lag(Total.ST.min, default = NA)) %>%
   ungroup()
+# Removing data of id who does not have any treatment minute data at all, and who only have treatment data
+data_A_cleaned <- data_A %>% 
+  filter(!pseudo_id %in% c(2520, 6759, 8622, 9680, 9285))
 
 # Get subdata for Intervention B
-data_B <- data_clean %>% 
+data_B <- data %>% 
   filter(Treatment == "B")
 data_B$Intervention <- ifelse(data_B$Phase == 'Treatment', 1, 0)
 data_B <- data_B %>% 
   group_by(pseudo_id) %>%
   mutate(lag_TSM = lag(Total.ST.min, default = NA)) %>%
   ungroup()
+# Removing data of id who does not have any treatment minute data at all, and who only have treatment data
+data_B_cleaned <- data_B %>% 
+  filter(!pseudo_id %in% c(2880))
 ```
 
 #Meta-learning for different individuals
 ```{r}
 # Generating the meta estimates information for  A and B
-summary_A = process_data(data_A)
-summary_B = process_data(data_B)
+summary_A = process_data(data_A_cleaned)
+summary_B = process_data(data_B_cleaned)
 meta_estimates_A <- meta_analysis(summary_A)
 meta_estimates_B <- meta_analysis(summary_B)
 print(meta_estimates_A)

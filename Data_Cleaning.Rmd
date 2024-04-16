@@ -43,6 +43,16 @@ data$Total.ST.min <- data$Total.ST.min.true
 data$Social.ST.min <- data$Social.ST.min.true
 data <- data[, !colnames(data) %in% c("Total.ST.min.true", "Social.ST.min.true", "Total.ST.match", "Social.ST.match")]
 
+# Filling id 1329 missing minute data
+data_1329 <- data[data$pseudo_id == 1329, ]
+data_1329 = data_1329[, c("Total.ST.min", "Social.ST.min", "Pickups")]
+method <- c("Total.ST.min" = "pmm", "Social.ST.min" = "pmm", "Pickups" = "pmm")
+imputed_data <- mice(data_1329, m=5, method=method, seed=123)
+summary(imputed_data)
+completed_data <- complete(imputed_data, 1)
+data[which(data$pseudo_id == 1329), "Total.ST.min"] <- completed_data$Total.ST.min
+data[which(data$pseudo_id == 1329), "Social.ST.min"] <- completed_data$Social.ST.min
+
 # Saving a copy
 write.xlsx(data, file = "final_full_data.xlsx")
 ```

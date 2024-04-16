@@ -111,16 +111,6 @@ for (col in columns_to_convert) {
 # Double check
 str(data)
 
-# Filling id 1329 missing minute data
-data_1329 <- data[data$pseudo_id == 1329, ]
-data_1329 = data_1329[, c("Total.ST.min", "Social.ST.min", "Pickups")]
-method <- c("Total.ST.min" = "pmm", "Social.ST.min" = "pmm", "Pickups" = "pmm")
-imputed_data <- mice(data_1329, m=5, method=method, seed=123)
-summary(imputed_data)
-completed_data <- complete(imputed_data, 1)
-data[which(data$pseudo_id == 1329), "Total.ST.min"] <- completed_data$Total.ST.min
-data[which(data$pseudo_id == 1329), "Social.ST.min"] <- completed_data$Social.ST.min
-
 # Removing data of id who does not have any treatment minute data at all, and who only have treatment data
 ids_to_remove <- c(9285, 2520, 8622, 9680, 2880, 6759)
 data_clean <- data %>% 

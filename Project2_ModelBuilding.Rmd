@@ -7,6 +7,7 @@ library(lmerTest)
 library(Matrix)
 library(mice)
 library(metafor)
+library(table1)
 ```
 
 #Defining functions that will be used later
@@ -101,15 +102,18 @@ data <- read_excel("final_full_data.xlsx")
 # Checking the type of variables
 str(data)
 columns_to_convert <- c("Pickups", "workmate", "academic.talk", "non.academic", 
-                        "pets", "sex", "age", "course.credit", 
-                        "country.degree", "job", "siblings", 
+                        "pets", "age", "course.credit", 
+                        "country.degree", "siblings", 
                         "apps", "devices")
 # Converting variables from chr to num
 for (col in columns_to_convert) {
   data[[col]] <- as.numeric(data[[col]])
 }
+data$compliance <- as.factor(data$compliance)
 # Double check
 str(data)
+data$sex[data$sex == "NA"] <- NA 
+demographics <- table1(~ Phase + compliance + Treatment + sex + age + Total.ST.min + Pickups, data = data, caption = "Screening intervention variable demographics")
 
 # Get subdata for Intervention A
 data_A <- data %>% 
@@ -154,9 +158,11 @@ hypothesis_test(meta_estimates_B, 3)
 #Meta-learning for different interventions
 ```{r}
 # Generating glm model for group A and B
-model_A <- glm(Total.ST.min ~ offset(log(Pickups)) + log(lag_TSM) + Intervention + weekday + pets + sex + age + course.credit + siblings + apps + devices +procrastination.score, family = "poisson", data = data_A)
+#model_A <- glm(Total.ST.min ~ offset(log(Pickups)) + log(lag_TSM) + Intervention + weekday + pets + sex + age + course.credit + siblings + apps + devices +procrastination.score, family = "poisson", data = data_A)
+model_A <- lmer(Total.ST.min ~ offset(log(Pickups)) + log(lag_TSM) + Intervention + weekday + pets + sex + age + course.credit + siblings + apps + devices +procrastination.score + (1 | pseudo_id), data = data_A)
 
-model_B <- glm(Total.ST.min ~ offset(log(Pickups)) + log(lag_TSM) + Intervention + weekday + pets + sex + age + course.credit + siblings + apps + devices +procrastination.score, family = "poisson", data = data_B)
+#model_B <- glm(Total.ST.min ~ offset(log(Pickups)) + log(lag_TSM) + Intervention + weekday + pets + sex + age + course.credit + siblings + apps + devices +procrastination.score, family = "poisson", data = data_B)
+model_B <- lmer(Total.ST.min ~ offset(log(Pickups)) + log(lag_TSM) + Intervention + weekday + pets + sex + age + course.credit + siblings + apps + devices +procrastination.score + (1 | pseudo_id), data = data_B)
 
 # Getting coefficients from A and B
 coef_A <- summary(model_A)$coefficients
@@ -195,6 +201,8 @@ meta_results_df <- data.frame(
   p.value = 2 * (1 - pnorm(abs(meta_estimates/meta_se)))
 )
 rownames(meta_results_df) <- NULL
+summary(model_A)
+summary(model_B)
 print(meta_results_df)
 ```
 
@@ -213,6 +221,10 @@ summary(model_mixed)
 
 #Generating glm for compliance condition
 ```{r}
+data_combine$compliance <- as.factor(data_combine$compliance)
 model_compliance <- glm(compliance ~ log(lag_TSM) + weekday + pets + sex + age + course.credit + siblings + apps + devices +procrastination.score, family = "binomial", data = data_combine)
 summary(model_compliance)
+model_compliance_mixed <- glmer(compliance ~ log(lag_TSM) + weekday + pets + sex + age + course.credit + siblings + apps + devices +procrastination.score + (1 | pseudo_id),family = binomial(link = "logit"), data = data_combine)
+
+summary(model_compliance_mixed)
 ```

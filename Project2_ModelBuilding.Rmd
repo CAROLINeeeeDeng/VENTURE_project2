@@ -227,4 +227,13 @@ summary(model_compliance)
 model_compliance_mixed <- glmer(compliance ~ log(lag_TSM) + weekday + pets + sex + age + course.credit + siblings + apps + devices +procrastination.score + (1 | pseudo_id),family = binomial(link = "logit"), data = data_combine)
 
 summary(model_compliance_mixed)
+
+# lmer tests
+model_A <- lmer(Total.ST.min ~ offset(log(Pickups)) + log(lag_TSM) + Intervention + weekday + pets + sex + age + course.credit + siblings + apps + devices +procrastination.score + (1 | pseudo_id), data = data_A)
+
+model_B <- lmer(Total.ST.min ~ offset(log(Pickups)) + log(lag_TSM) + Intervention + weekday + pets + sex + age + course.credit + siblings + apps + devices +procrastination.score + (1 | pseudo_id), data = data_B)
+
+# Summaries of p-values and correlations
+summary(model_A)
+summary(model_B)
 ```
